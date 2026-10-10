@@ -1,0 +1,54 @@
+name: Build MCBridge (arm64)
+
+# Same build recipe as ProMenu (menusan), which already builds on GitHub Actions:
+# AML headers via setup.sh -> ndk-build -> upload the plugin + the unstripped copy + the full build log.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch AML headers
+        run: bash mod/setup.sh
+
+      - name: Build with ndk-build
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$ANDROID_NDK_ROOT}}"
+          set +e
+          "$NDK/ndk-build" -j"$(nproc)" NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=mod/Android.mk NDK_APPLICATION_MK=mod/Application.mk > build.log 2>&1
+          rc=$?
+          set -e
+          tail -n 8 build.log
+          if [ $rc -ne 0 ]; then
+            PAT="NDK:|error|fatal|undefined reference|No such file"
+            grep -E "$PAT" build.log | head -10 | sed "s#/home/runner/work/[^/]*/[^/]*/##" | cut -c1-350 | sed "s/%/%25/g" | while IFS= read -r l; do echo "::error::$l"; done
+            { echo "### First build errors"; echo "\`\`\`"; grep -E "$PAT" build.log | head -40 | sed "s#/home/runner/work/[^/]*/[^/]*/##"; echo "\`\`\`"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit $rc
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: libMCBridge64
+          path: libs/arm64-v8a/libMCBridge64.so
+
+      # unstripped copy: turns a crash offset like "libMCBridge64.so + 0x1a2b4" into a function/line:
+      #   llvm-addr2line -f -C -i -e libMCBridge64.so 0x1a2b4
+      - name: Upload symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: libMCBridge64-symbols
+          path: obj/local/arm64-v8a/libMCBridge64.so
