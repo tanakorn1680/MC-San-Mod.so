@@ -25,6 +25,9 @@ def main():
         print("SUMMARY connected=0")
         return 1
     s.settimeout(0.2)
+    # identify first: MCBridge's menu only counts a client as Minecraft when it says "ID minecraft ...", so a test tool
+    # (and its fake E lines) is shown as a test client and can never be mistaken for the real Minecraft side
+    s.sendall(f"ID {'fake-mc' if a.fake_mc else 'bridge_probe'} 1\n".encode())
     t0 = time.time()
     buf = b""
     got = {"HELLO": 0, "P": 0, "other": 0}

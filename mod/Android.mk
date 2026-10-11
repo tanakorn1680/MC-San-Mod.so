@@ -5,7 +5,12 @@ include $(CLEAR_VARS)
 -include $(LOCAL_PATH)/aml_inc.mk
 
 LOCAL_MODULE     := MCBridge64
-LOCAL_SRC_FILES  := src/mcbridge.cpp
+LOCAL_SRC_FILES  := src/mcbridge.cpp \
+                    imgui/imgui.cpp \
+                    imgui/imgui_draw.cpp \
+                    imgui/imgui_tables.cpp \
+                    imgui/imgui_widgets.cpp \
+                    imgui/imgui_demo.cpp
 
 # AML ships its Logger implementation as source (mod/logger.cpp); same fallback logic as ProMenu
 ifneq ($(wildcard $(LOCAL_PATH)/include/mod/logger.cpp),)
@@ -14,9 +19,11 @@ else
 LOCAL_SRC_FILES  += src/logger_fallback.cpp
 endif
 
-LOCAL_C_INCLUDES := $(LOCAL_PATH)/src $(LOCAL_PATH)/include $(AML_EXTRA_INC)
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/src $(LOCAL_PATH)/imgui $(LOCAL_PATH)/include $(AML_EXTRA_INC)
 # -g only affects the UNSTRIPPED copy in obj/local/..., the .so that goes into the game stays small
 LOCAL_CPPFLAGS   := -O2 -g -fno-strict-aliasing
+# bind our own ImGui symbols locally (together with the hidden-visibility patch in setup.sh) so this plugin's ImGui copy
+# can never collide with another mod's ImGui copy (ProMenu has its own)
 LOCAL_LDFLAGS    := -Wl,-Bsymbolic
 LOCAL_LDLIBS     := -llog -ldl
 include $(BUILD_SHARED_LIBRARY)

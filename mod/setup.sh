@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# Fetches the AML mod headers (same source and layout ProMenu uses). Run from anywhere; works on the repo root.
+# Fetches ImGui (for the in-game menu) and the AML mod headers (same sources and layout ProMenu uses).
+# Run from anywhere; works on the repo root.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-rm -rf aml mod/include
+IMGUI_TAG="${IMGUI_TAG:-v1.91.9}"
+
+rm -rf aml mod/include mod/imgui
+git clone --depth 1 --branch "$IMGUI_TAG" https://github.com/ocornut/imgui mod/imgui
 git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/RusJJ/AndroidModLoader aml
+
+# keep ImGui symbols hidden: another mod (ProMenu) ships its own ImGui copy in the same process
+printf '\n#define IMGUI_API __attribute__((visibility("hidden")))\n' >> mod/imgui/imconfig.h
 
 # AML headers must be reachable as <mod/amlmod.h>
 mkdir -p mod/include
@@ -20,4 +27,4 @@ if [ -n "$G" ]; then INC="$INC \$(LOCAL_PATH)/../$(dirname "$G")"; fi
 echo "AML_EXTRA_INC :=$INC" > mod/aml_inc.mk
 
 echo "--- AML mod/ folder:"; ls mod/include/mod
-echo "OK: AML headers ready"
+echo "OK: imgui $IMGUI_TAG + AML headers ready"

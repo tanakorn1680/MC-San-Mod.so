@@ -1,7 +1,7 @@
 name: Build MCBridge (arm64)
 
 # Same build recipe as ProMenu (menusan), which already builds on GitHub Actions:
-# AML headers via setup.sh -> ndk-build -> upload the plugin + the unstripped copy + the full build log.
+# ImGui + AML headers via setup.sh -> ndk-build -> upload the plugin + the unstripped copy + the full build log.
 on:
   workflow_dispatch:
   push:
@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch AML headers
+      - name: Fetch ImGui and AML headers
         run: bash mod/setup.sh
 
       - name: Build with ndk-build

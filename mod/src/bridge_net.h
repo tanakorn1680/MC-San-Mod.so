@@ -6,7 +6,9 @@
 //   GTA -> MC   HELLO <name> <version>            sent once per new client
 //               P <seq> <x> <y> <z>               player position, ~10 Hz, only when it changed
 //               + any line the plugin queues with Say()   (PONG, OK ..., ERR ...)
-//   MC  -> GTA  PING | SPAWN_PED | SPAWN_OBJ <model name>     (test commands)
+//   MC  -> GTA  ID <name> <version>               who is connecting (a Minecraft-side plugin sends `ID minecraft <ver>`;
+//                                                 test tools send their own name, so the menu can tell them apart)
+//               PING | SPAWN_PED | SPAWN_OBJ <model name>     (test commands)
 //               E <id> <type> <x> <y> <z> <yaw>   entity state   (DRAFT, not wired to the game yet)
 //               B <x> <y> <z> <blockId>           block change   (DRAFT, not wired to the game yet)
 // Threads: one network thread (owns the sockets) + the game thread (SetPlayer / PopInbox / Say).
@@ -193,5 +195,15 @@ static void Say(const char* fmt, ...) {                           // game thread
     g_out.Push(b);
 }
 static bool Connected() { return g_cfd >= 0; }
+
+// read-only snapshot for the in-game status menu (plain loads of counters the network thread writes; torn reads are harmless)
+struct Stats { bool listening, connected; unsigned long accepted, rx, tx, dropped; int bindErrno; };
+static Stats GetStats() {
+    Stats s;
+    s.listening = g_lfd >= 0; s.connected = g_cfd >= 0;
+    s.accepted = g_accepted; s.rx = g_rxLines; s.tx = g_txLines; s.dropped = g_dropped;
+    s.bindErrno = g_bindErrno;
+    return s;
+}
 
 } // namespace Bridge
