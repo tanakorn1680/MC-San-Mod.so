@@ -1,0 +1,8 @@
+{
+  "type": "preload-native",
+  "name": "MCBridge",
+  "author": "MCBridge project",
+  "version": "0.1.0",
+  "entry": "libmcbridge_mc.so",
+  "minecraft_versions": []
+}
