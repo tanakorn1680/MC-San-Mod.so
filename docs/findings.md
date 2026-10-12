@@ -61,3 +61,26 @@
 1. `libminecraftpe.so` + `libpreloader.so` ที่สมบูรณ์ + เวอร์ชัน Minecraft และเวอร์ชัน LeviLauncher
 2. ภาพ/วิดีโอตัวอย่างที่ตั้งใจแนบ (ในแชทนี้มีแค่ไฟล์ zip 4 ไฟล์)
 3. ผลรันจริง: build ผ่านไหม เกมโหลดปลั๊กอินไหม และไฟล์ `last_action.txt` / `session.log`
+
+
+## ผลวิเคราะห์ `libminecraftpe.so` ของผู้ใช้ (2026-10-11) — ตรวจเองจากไฟล์
+
+- ELF ARM64 stripped 328,419,680 ไบต์; `.text` ที่ไฟล์ออฟเซ็ต/ที่อยู่ 0x64c64e0 ขนาด 0xc44afcc (ไฟล์นี้ออฟเซ็ต = vaddr ใน `.text`)
+- dynsym 90,653 ชื่อ ไม่มีคลาสเกมเลย (ClientInstance/LocalPlayer/Actor/GameMode = 0 ผล) → hook ด้วยชื่อไม่ได้ ต้องใช้ signature
+- ชื่อ RTTI ของคลาสเกมอยู่ใน `.rodata` (`14ClientInstance`, `11LocalPlayer`, `11BlockSource`, `12ServerPlayer`, `5Actor`, `5Level`, `8GameMode`, `13MinecraftGame`)
+- **แหล่งอ้างอิงโอเพนซอร์ส** (clone ด้วย git ได้ใน sandbox):
+  - `LiteLDev/LeviLaunchroid` (Apache-2.0) + `LiteLDev/preloader-android`: API ม็อดเนทีฟ (`pl/Mod.hpp`, `pl/memory/Hook.hpp`, `pl/memory/Signature.hpp`),
+    manifest `type: preload-native`, `.levipack` = zip ของ manifest.json + .so
+  - `QYCottage/BedrockTools` (GPL-3.0): ม็อดเนทีฟจริงที่ฮุก Minecraft 1.26.5X.X ด้วย signature; ใช้เป็น **ข้อมูลอ้างอิง** (ชื่อฟังก์ชัน/ออฟเซ็ต) ไม่ได้คัดลอกโค้ดมาใช้
+    (ถ้าจะเอาโค้ดของมันมารวม ผลงานต้องเป็น GPL-3.0 ตามไปด้วย)
+- สแกน signature ทั้ง 124 ตัวของ BedrockTools กับ `.text` ของไฟล์นี้: **ตรงแบบไม่ซ้ำ 92 ตัว**, ซ้ำหลายที่ 6, ไม่ตรง 26 (VersionString และ LevelInit ไม่ตรง)
+  ตัวที่เราใช้/ต้องการตรงทั้งหมด: NormalTick 0xaac7dd8, ClientInstanceUpdate 0x98036a4, ClientInstanceGetLocalPlayer 0x9808050,
+  BlockSourceGetBlock 0xfb91918, LevelGetHitResult 0xfb3adb8, ActorIsPlayer 0xf56b6e0, ActorFetchNearbyActorsSorted 0xf591810
+  (หน้าที่ของแต่ละตัวมาจากชื่อใน BedrockTools — เรายังไม่ได้พิสูจน์เองทีละฟังก์ชัน)
+- **signature ของเราเอง** (ทุกคำสั่งเก็บแค่ไบต์บนสุด ที่เหลือเป็น wildcard, 16 คำสั่ง) ตรงไฟล์นี้ **1 ที่คือ 0xaac7dd8 เท่ากับ NormalTick ของ BedrockTools** — ยืนยันตัวตนฟังก์ชันจากสองทางอิสระ
+- ออฟเซ็ตตำแหน่ง `Actor+0x208` (ตัวชี้ไปยัง state-vector component, Vec3 อยู่ที่ +0): ในไฟล์มีฟังก์ชันเล็กที่ 0xf56bbec
+  `ldr x8,[x0,#0x208]; ldp s0,s1,[x8]; ldr s2,[x8,#8]; ret` ซึ่งอ่านตามโครงสร้างนี้ตรงๆ (= Actor::getPosition) และมีอีกสองฟังก์ชันเล็กที่ใช้ออฟเซ็ตเดียวกัน (0xf564370, 0xf56b054)
+  ออฟเซ็ตของ rotation (0x218) **ยังไม่ยืนยัน** (มี getter 0x218 อยู่ 18 ตัวในหลายคลาส แต่ไม่เจอตัวที่คืนค่า Vec2) → ม็อดยังไม่ส่งทิศหันหน้า
+- เวอร์ชัน: สตริง `1.26.52` อยู่ในไบนารี 1 ที่ และ README ของ BedrockTools ระบุเป้าหมาย 1.26.5X.X; `bedrock-samples-main.zip` ที่ผู้ใช้ส่งมาเป็นชุดตัวอย่าง 1.26.50.4 (15-09-2026)
+  → น่าจะเป็นตระกูลเดียวกัน แต่ **เลขเวอร์ชันเต็มของ build นี้ยังไม่ยืนยัน** (ขอให้ผู้ใช้ดูเลขในเกม)
+- `libpairipcore.so` (ระบบป้องกันแอปของ Google) เป็น dependency ของ `libminecraftpe.so` — ไม่ได้แตะ

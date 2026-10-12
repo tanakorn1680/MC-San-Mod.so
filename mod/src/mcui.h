@@ -19,20 +19,21 @@
 
 namespace McUI {
 
-static const char* kVersion = "MCBridge 0.3";
+static const char* kVersion = "MCBridge 0.4";
 
 // =============================================================== state
 enum { kTabStatus = 0, kTabProgress, kTabTests, kTabLog, kTabSettings, kTabCount };
 static const char* kTabEn[kTabCount] = {"Status", "Progress", "Tests", "Log", "Settings"};
 static const char* kTabTh[kTabCount] = {"สถานะ", "ความคืบหน้า", "ทดสอบ", "ล็อก", "ตั้งค่า"};
-static const char* kMsNameTh[Mc::kMsCount] = {
+static const char* const kMsNameTh[] = {
     "ปลั๊กอินโหลดในเกม GTA แล้ว", "เซิร์ฟเวอร์สะพานเปิดรอรับ", "อ่านตำแหน่งผู้เล่นได้", "สร้างคนเดินถนน (ทดสอบ)",
     "สร้างวัตถุ (ทดสอบ)", "Minecraft ต่อเข้าสะพานแล้ว", "รับข้อมูลเอนทิตี (บรรทัด E) จาก Minecraft",
-    "รับข้อมูลบล็อก (บรรทัด B) จาก Minecraft", "วาดบล็อก Minecraft ในโลก GTA",
+    "รับข้อมูลบล็อก (บรรทัด B) จาก Minecraft", "ให้ตัวละคร GTA เดินตามผู้เล่น Minecraft (เฉพาะการเคลื่อนที่)",
+    "วาดบล็อก Minecraft ในโลก GTA",
     "Steve และม็อบเป็นตัวละคร GTA โต้ตอบกับรถ/คนเดินถนน", "ซิงก์กล้องและเอฟเฟกต์สองทาง",
 };
 // what is missing / what to do, shown while a milestone is not done
-static const char* kHintEn[Mc::kMsCount] = {
+static const char* const kHintEn[] = {
     "Check that libMCBridge64.so is in the AML mods folder and the game version has the hook symbols.",
     "The port may be in use by another app: change port= in MCBridge/config.txt.",
     "Start playing (not the front-end menu), then wait a moment.",
@@ -41,11 +42,12 @@ static const char* kHintEn[Mc::kMsCount] = {
     "Needs a Minecraft-side plugin that connects to this port and sends an ID line: ID minecraft <version>.",
     "Waits for E lines sent by the connected Minecraft client.",
     "Waits for B lines sent by the connected Minecraft client.",
+    "Turn it on in the Tests tab once the Minecraft player position is arriving. Opt-in, off by default.",
     "No code yet. Needs real block data from the Minecraft side first.",
     "No code yet.",
     "No code yet.",
 };
-static const char* kHintTh[Mc::kMsCount] = {
+static const char* const kHintTh[] = {
     "เช็คว่าไฟล์ libMCBridge64.so อยู่ในโฟลเดอร์ mods ของ AML และเกมเวอร์ชันนี้มี symbol ที่ต้องใช้ครบ",
     "พอร์ตอาจถูกแอปอื่นใช้อยู่ ลองเปลี่ยน port= ใน MCBridge/config.txt",
     "เข้าเล่นเกมก่อน (ไม่ใช่หน้าเมนูหลัก) แล้วรอสักครู่",
@@ -54,10 +56,15 @@ static const char* kHintTh[Mc::kMsCount] = {
     "ต้องมีปลั๊กอินฝั่ง Minecraft ที่ต่อเข้าพอร์ตนี้ และส่งบรรทัด ID ก่อน: ID minecraft <เวอร์ชัน>",
     "รอบรรทัด E จาก Minecraft ที่ต่ออยู่",
     "รอบรรทัด B จาก Minecraft ที่ต่ออยู่",
+    "เปิดในแท็บ ทดสอบ เมื่อตำแหน่งผู้เล่น Minecraft เริ่มเข้ามาแล้ว ปิดเป็นค่าเริ่มต้น ต้องเปิดเอง",
     "ยังไม่มีโค้ด ต้องมีข้อมูลบล็อกจริงจากฝั่ง Minecraft ก่อน",
     "ยังไม่มีโค้ด",
     "ยังไม่มีโค้ด",
 };
+
+static_assert(sizeof(kMsNameTh) / sizeof(kMsNameTh[0]) == Mc::kMsCount, "one Thai name per milestone");
+static_assert(sizeof(kHintEn) / sizeof(kHintEn[0]) == Mc::kMsCount, "one English hint per milestone");
+static_assert(sizeof(kHintTh) / sizeof(kHintTh[0]) == Mc::kMsCount, "one Thai hint per milestone");
 
 static float g_sc = 1.f;                          // UI scale (screen short side / 1080)
 static float g_slop = 48.f;                       // finger jitter allowed before a tap becomes a drag (pixels)
@@ -481,6 +488,11 @@ static void PageStatus() {
     else snprintf(buf, sizeof(buf), "E %lu   B %lu", e.entMsgs, e.blkMsgs);
     Line(T("Minecraft data", "ข้อมูล Minecraft"), buf, (e.entMsgs + e.blkMsgs) > 0 ? kGreen : kGrey);
     Line(T("Player", "ผู้เล่น"), g_rows[Mc::kMsPos].detail, StateColor(g_rows[Mc::kMsPos].st));
+    if (e.mcPosCount > 0) {
+        snprintf(buf, sizeof(buf), "%.1f  %.1f  %.1f   (%lu)", e.mcPos[0], e.mcPos[1], e.mcPos[2], e.mcPosCount);
+        Line(T("Minecraft player", "ผู้เล่น Minecraft"), buf, kGreen);
+    }
+    if (e.mcStatus[0]) Line(T("Minecraft side", "ฝั่ง Minecraft"), e.mcStatus, kGreen);
     ImGui::Spacing();
 
     ImGui::TextColored(ImVec4(0.45f, 0.62f, 1.f, 1.f), "%s", T("Next step", "ขั้นถัดไป"));
@@ -529,6 +541,22 @@ static void PageTests() {
     if (Btn(g_objArmed ? T("TAP AGAIN to confirm", "แตะอีกครั้งเพื่อยืนยัน") : buf, ImVec2(w, btnH), 52, g_objArmed ? kRed : kDangerCol, canRun)) {
         if (g_objArmed) { g_objArmed = false; Mc::g_req.obj = 1; Toast(T("Object test queued", "สั่งทดสอบวัตถุแล้ว")); }
         else { g_objArmed = true; g_objArmedT = 3.f; }
+    }
+    ImGui::Spacing();
+
+    ImGui::TextColored(ImVec4(0.45f, 0.62f, 1.f, 1.f), "%s", T("Minecraft link", "ลิงก์กับ Minecraft"));
+    {
+        const bool haveMc = e.mcPosCount > 0;
+        snprintf(buf, sizeof(buf), "%s: %s", T("Mirror the Minecraft player", "ให้ตัวละคร GTA เดินตาม Minecraft"), e.mirrorOn ? T("ON", "เปิด") : T("OFF", "ปิด"));
+        if (Btn(buf, ImVec2(w, btnH), 53, e.mirrorOn ? kAccentCol : kBtnCol, canRun && (haveMc || e.mirrorOn))) {
+            Mc::g_req.mirror = 1;
+            Toast(e.mirrorOn ? T("Mirror turned off", "ปิดการเดินตามแล้ว") : T("Mirror turned on", "เปิดการเดินตามแล้ว"));
+        }
+        if (!haveMc && !e.mirrorOn) Note(T("Needs the Minecraft player position first (see the Status tab).", "ต้องมีตำแหน่งผู้เล่น Minecraft เข้ามาก่อน (ดูแท็บ สถานะ)"), kDim);
+        else Note(T("Opt-in. A second character copies your Minecraft movement. If the game ever removes that character it could crash: turn it off when done.",
+                    "ต้องเปิดเอง ตัวละครตัวที่สองจะเดินตามการเคลื่อนที่ใน Minecraft ถ้าเกมลบตัวละครนี้ทิ้งอาจทำให้เกมเด้งได้ เลิกใช้แล้วให้ปิด"), kDim);
+        const Mc::Row& r = g_rows[Mc::kMsMirror];
+        Card(T("Mirror", "เดินตาม"), StateLabel(r.st), StateColor(r.st), r.detail, nullptr);
     }
     ImGui::Spacing();
 

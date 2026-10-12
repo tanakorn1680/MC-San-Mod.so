@@ -1,0 +1,68 @@
+name: Build MCBridge Minecraft-side mod (arm64)
+
+# LeviLauncher native mod: CMake + Android NDK, the preloader SDK is cloned from LiteLDev/preloader-android.
+# Output: mcbridge-mc.levipack (import it in LeviLauncher: Mods) + the .so + the full build log.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: [ 'mcmod/**', '.github/workflows/build-mc.yml' ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the preloader SDK
+        run: git clone --depth 1 https://github.com/LiteLDev/preloader-android preloader-android
+
+      - name: Configure and build with the Android NDK
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$ANDROID_NDK_ROOT}}"
+          set +e
+          {
+            cmake -S mcmod -B build-mc -G Ninja \
+              -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DPRELOADER_ANDROID_ROOT="$PWD/preloader-android" &&
+            cmake --build build-mc --target mcbridge_mc
+          } > build-mc.log 2>&1
+          rc=$?
+          set -e
+          tail -n 8 build-mc.log
+          if [ $rc -ne 0 ]; then
+            PAT="error|fatal|undefined reference|No such file|CMake Error"
+            grep -E "$PAT" build-mc.log | head -10 | sed "s#/home/runner/work/[^/]*/[^/]*/##" | cut -c1-350 | sed "s/%/%25/g" | while IFS= read -r l; do echo "::error::$l"; done
+            { echo "### First build errors"; echo "\`\`\`"; grep -E "$PAT" build-mc.log | head -40 | sed "s#/home/runner/work/[^/]*/[^/]*/##"; echo "\`\`\`"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit $rc
+
+      - name: Package .levipack
+        run: |
+          mkdir -p dist/mcbridge-mc/config
+          cp mcmod/manifest.json dist/mcbridge-mc/manifest.json
+          cp build-mc/out/arm64-v8a/libmcbridge_mc.so dist/mcbridge-mc/libmcbridge_mc.so
+          (cd dist/mcbridge-mc && zip -qr ../mcbridge-mc.levipack .)
+          ls -l dist
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-mc-log
+          path: build-mc.log
+          if-no-files-found: ignore
+
+      - name: Upload mod package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcbridge-mc-levipack
+          path: dist/mcbridge-mc.levipack
+
+      - name: Upload the plain .so
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmcbridge_mc
+          path: build-mc/out/arm64-v8a/libmcbridge_mc.so

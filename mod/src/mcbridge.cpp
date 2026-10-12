@@ -1,4 +1,4 @@
-// MCBridge 0.3 - GTA SA side of the GTA x Minecraft bridge (AML plugin, arm64).
+// MCBridge 0.4 - GTA SA side of the GTA x Minecraft bridge (AML plugin, arm64).
 //
 // What this version does (GTA side only; the Minecraft side does not exist yet):
 //   1. resolves game functions BY NAME through AML (aml->GetSym), no hard-coded offsets
@@ -6,12 +6,15 @@
 //   3. opens a loopback TCP server (127.0.0.1:47800) and publishes the player position (see bridge_net.h)
 //   4. executes test commands that arrive over the bridge, plus an optional one-shot self test
 //   5. writes breadcrumbs + a session log to Android/data/com.rockstargames.gtasa/files/MCBridge/
-//   6. NEW in 0.3: its own in-game menu (green "MC" button): live status, progress of every milestone, test buttons,
+//   6. since 0.3: its own in-game menu (green "MC" button): live status, progress of every milestone, test buttons,
 //      log viewer + report file. Own ImGui + own touch handling (mcui.h), no dependency on ProMenu/menusan.
 //      Turn it off with menu=0 in config.txt (the bridge itself keeps working).
 //
-// Status: 0.2 was built with the real NDK and its self test ran in the game (logs from the phone). The menu is new in
-// 0.3 and has only been checked for syntax against the real ImGui + AML headers, not built with the NDK or run in the game.
+//   7. NEW in 0.4: understands the Minecraft side (mcmod/): ID / E 0 player / S lines, shows the Minecraft player + the other
+//      side's status in the menu, and an opt-in "mirror": a GTA ped that follows the Minecraft player's movement.
+//
+// Status: 0.2 and 0.3 were built with the real NDK and run in the game (logs / report.txt from the phone): menu, model probe,
+// ped test and object test (gunbox) all worked. Not yet tested: running together with ProMenu.
 #include <mod/amlmod.h>
 #include <mod/logger.h>
 #include <ctype.h>
@@ -25,7 +28,7 @@
 #include "safemem.h"
 #include "bridge_net.h"
 
-MYMOD(net.mcgta.bridge, MCBridge, 0.3, MCGTA)
+MYMOD(net.mcgta.bridge, MCBridge, 0.4, MCGTA)
 NEEDGAME(com.rockstargames.gtasa)
 
 // ------------------------------------------------------------------ game access
@@ -252,13 +255,17 @@ static void SyncBridgeEvidence() {
 static void HandleLine(const char* line) {
     if (!strcmp(line, "PING")) { Bridge::Say("PONG"); return; }
     if (!strncmp(line, "ID ", 3)) {                                       // "ID <name> <version>": who is on the other end
-        const char* n = line + 3;
-        size_t len = strcspn(n, " ");
-        if (len >= sizeof(g_ev.clientName)) len = sizeof(g_ev.clientName) - 1;
-        memcpy(g_ev.clientName, n, len); g_ev.clientName[len] = 0;
-        g_ev.clientIsMinecraft = (strncmp(g_ev.clientName, "minecraft", 9) == 0) ? 1 : 0;
-        Diag::Log("bridge: client identified as '%s'%s", g_ev.clientName, g_ev.clientIsMinecraft ? "" : " (not Minecraft)");
+        Mc::ApplyDataLine(g_ev, line);
+        Diag::Log("bridge: client identified as '%s' version '%s'%s", g_ev.clientName, g_ev.clientVersion,
+                  g_ev.clientIsMinecraft ? "" : " (not Minecraft)");
         Bridge::Say("OK ID");
+        return;
+    }
+    if (line[0] == 'S' && line[1] == ' ') {                               // status text of the Minecraft side
+        const bool changed = strcmp(g_ev.mcStatus, line + 2) != 0;
+        Mc::ApplyDataLine(g_ev, line);
+        static int logged = 0;
+        if (changed && ++logged <= 30) Diag::Log("mc status: %s", g_ev.mcStatus);
         return;
     }
     if (!strcmp(line, "SPAWN_PED")) { if (!g_playingNow) { Bridge::Say("ERR SPAWN_PED not playing"); return; } g_wantPed = 1; return; }
@@ -267,13 +274,76 @@ static void HandleLine(const char* line) {
         snprintf(g_wantObjName, sizeof(g_wantObjName), "%s", line + 10); g_wantObj = 1; return;
     }
     if ((line[0] == 'E' || line[0] == 'B') && line[1] == ' ') {            // draft Minecraft data: only counted for now
-        if (g_ev.clientIsMinecraft) { if (line[0] == 'E') g_ev.entMsgs++; else g_ev.blkMsgs++; }
-        else g_ev.otherDataMsgs++;                                         // test tools / fake data never count as Minecraft
+        Mc::ApplyDataLine(g_ev, line);                                     // test tools / fake data never count as Minecraft
         if (++g_mcMsgs <= 20) Diag::Log("mc->gta: %s", line);
         return;
     }
     Diag::Log("bridge: unknown line '%s'", line);
     Bridge::Say("ERR unknown");
+}
+
+// ---- mirror of the Minecraft player (opt-in from the menu).  Position only: a ped created with the same AddPed call the ped test
+// uses is moved every tick to  anchor + (minecraft position - minecraft anchor).  Axis mapping (an assumption, flip it here if
+// it looks mirrored in the game): Minecraft x = east, y = up, z = south;  GTA x = east, y = north, z = up.
+static void*  g_mirPed = nullptr;
+static char   g_mirVtbl[8];                    // first 8 bytes of the proxy ped at creation: its vtable pointer
+static float  g_mirGta[3], g_mirMc[3];
+static bool   g_mirAnchored = false;
+static unsigned long g_mirLastCount = 0;
+
+static void MirrorFail(const char* why) {
+    g_ev.mirrorState = 0;
+    snprintf(g_ev.mirrorNote, sizeof(g_ev.mirrorNote), "%s", why);
+    g_ev.mirrorOn = 0;                         // never keep poking at something that failed
+    Diag::Crumb("mirror: FAILED: %s", why);
+}
+
+static void MirrorTick() {
+    if (!g_ev.mirrorOn || g_ev.mcPosCount == 0) return;
+    float me[3];
+    if (!g_mirPed) {
+        if (!g_addPed || !PlayerPos(me)) { MirrorFail("no AddPed function or no player position"); return; }
+        const CVec at = { me[0] + 3.f, me[1], me[2] };
+        g_mirPed = g_addPed(4 /*PEDTYPE_CIVMALE*/, 0, at, false);
+        Diag::Crumb("mirror: AddPed returned %p", g_mirPed);
+        if (!g_mirPed) { MirrorFail("AddPed returned null"); return; }
+        if (!SafeMem::Read(g_mirPed, g_mirVtbl, sizeof(g_mirVtbl))) { g_mirPed = nullptr; MirrorFail("new ped is not readable"); return; }
+        g_mirGta[0] = at.x; g_mirGta[1] = at.y; g_mirGta[2] = at.z;
+        memcpy(g_mirMc, g_ev.mcPos, sizeof(g_mirMc));
+        g_mirAnchored = true; g_mirLastCount = g_ev.mcPosCount;
+        g_ev.mirrorState = -1; g_ev.mirrorMoves = 0; g_ev.mirrorNote[0] = 0;
+        return;
+    }
+    if (g_ev.mcPosCount == g_mirLastCount) return;                        // nothing new from Minecraft
+    g_mirLastCount = g_ev.mcPosCount;
+
+    // is it still the same object?  (the game may remove peds: a changed vtable pointer or an unreadable page means yes)
+    char vt[8];
+    if (!SafeMem::Read(g_mirPed, vt, sizeof(vt)) || memcmp(vt, g_mirVtbl, sizeof(vt)) != 0) {
+        g_mirPed = nullptr; g_mirAnchored = false;
+        MirrorFail("the proxy ped is gone (the game removed it)");
+        return;
+    }
+    float t[3] = { g_mirGta[0] + (g_ev.mcPos[0] - g_mirMc[0]),
+                   g_mirGta[1] - (g_ev.mcPos[2] - g_mirMc[2]),
+                   g_mirGta[2] + (g_ev.mcPos[1] - g_mirMc[1]) };
+    if (PlayerPos(me)) {                                                  // keep it near the player, or the game would despawn it
+        const float dx = t[0] - me[0], dy = t[1] - me[1];
+        if (dx * dx + dy * dy > 100.f * 100.f) {                          // re-anchor 3 m beside the player
+            g_mirGta[0] = me[0] + 3.f; g_mirGta[1] = me[1]; g_mirGta[2] = me[2];
+            memcpy(g_mirMc, g_ev.mcPos, sizeof(g_mirMc));
+            memcpy(t, g_mirGta, sizeof(t));
+            Diag::Crumb("mirror: re-anchored near the player");
+        }
+    }
+    float back[3];
+    if (!SetEntityPos(g_mirPed, t) || !EntityPos(g_mirPed, back)) { MirrorFail("could not write/read the proxy ped position"); return; }
+    if (fabsf(back[0] - t[0]) > 0.5f || fabsf(back[1] - t[1]) > 0.5f || fabsf(back[2] - t[2]) > 0.5f) {
+        MirrorFail("the position did not stay where it was written"); return;
+    }
+    g_ev.mirrorState = 1; g_ev.mirrorMoves++;
+    if (g_ev.mirrorMoves <= 3) Diag::Crumb("mirror: moved proxy ped to %.1f %.1f %.1f (minecraft %.1f %.1f %.1f)", t[0], t[1], t[2],
+                                           g_ev.mcPos[0], g_ev.mcPos[1], g_ev.mcPos[2]);
 }
 
 static void OnTick() {
@@ -303,6 +373,13 @@ static void OnTick() {
     if (Mc::g_req.probe) { Mc::g_req.probe = 0; Diag::Crumb("menu: model check"); ActProbeModels(g_cfg.probe); }
     if (Mc::g_req.ped)   { Mc::g_req.ped = 0;   Diag::Crumb("menu: spawn ped test"); ActSpawnPed(); }
     if (Mc::g_req.obj)   { Mc::g_req.obj = 0;   Diag::Crumb("menu: spawn object test (%s)", g_cfg.objName); ActSpawnObject(g_cfg.objName); }
+    if (Mc::g_req.mirror) {
+        Mc::g_req.mirror = 0;
+        g_ev.mirrorOn = g_ev.mirrorOn ? 0 : 1;
+        if (g_ev.mirrorOn) { g_ev.mirrorState = -1; g_ev.mirrorMoves = 0; g_ev.mirrorNote[0] = 0; g_mirLastCount = 0; }
+        Diag::Crumb("menu: mirror %s", g_ev.mirrorOn ? "ON" : "off");
+    }
+    MirrorTick();
 
     if (g_wantPed) { g_wantPed = 0; Bridge::Say(ActSpawnPed() ? "OK SPAWN_PED" : "ERR SPAWN_PED"); }
     if (g_wantObj) { g_wantObj = 0; Bridge::Say(ActSpawnObject(g_wantObjName) ? "OK SPAWN_OBJ" : "ERR SPAWN_OBJ"); }
@@ -411,7 +488,7 @@ static bool InitMenu() {
 
     // Thai glyphs are merged into the same font, so one atlas serves both languages
     bool thaiOk = false;
-    const char* thaiUsed = "none";
+    char thaiUsed[512] = "none";                       // lives as long as InitMenu, so the log line below prints the real path
     {
         static const ImWchar kThai[] = { 0x0E00, 0x0E7F, 0 };
         char own2[256]; Diag::Path(own2, sizeof(own2), "font_th.ttf");
@@ -422,7 +499,7 @@ static bool InitMenu() {
             if (!path || !FileExists(path)) continue;
             ImFontConfig tc;
             tc.MergeMode = true;
-            if (io.Fonts->AddFontFromFileTTF(path, 34.f * sc, &tc, kThai)) { thaiOk = true; thaiUsed = path; break; }
+            if (io.Fonts->AddFontFromFileTTF(path, 34.f * sc, &tc, kThai)) { thaiOk = true; snprintf(thaiUsed, sizeof(thaiUsed), "%s", path); break; }
         }
     }
 
@@ -498,7 +575,7 @@ ON_MOD_LOAD()
 {
     logger->SetTag("MCBridge");
     Diag::KeepPreviousSession();
-    Diag::Crumb("MCBridge 0.3 loading");
+    Diag::Crumb("MCBridge 0.4 loading");
     LoadConfig();
     g_ev.port = g_cfg.port;
     snprintf(g_ev.objName, sizeof(g_ev.objName), "%s", g_cfg.objName);
