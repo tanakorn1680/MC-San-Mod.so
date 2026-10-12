@@ -2,10 +2,18 @@ name: Build MCBridge (arm64)
 
 # Same build recipe as ProMenu (menusan), which already builds on GitHub Actions:
 # ImGui + AML headers via setup.sh -> ndk-build -> upload the plugin + the unstripped copy + the full build log.
+# Result on success: ONE download, "1-GTA-plugin-libMCBridge64" (a zip holding libMCBridge64.so -> put the .so in the AML mods folder).
+# On failure: one download "build-log". The unstripped copy is only produced when you start the run by hand and tick "symbols".
 on:
   workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Also keep the unstripped .so (only needed to decode a crash address)"
+        type: boolean
+        default: false
   push:
     branches: [ main ]
+    paths: [ 'mod/**', '.github/workflows/build.yml' ]
 
 jobs:
   build:
@@ -31,8 +39,8 @@ jobs:
           fi
           exit $rc
 
-      - name: Upload build log
-        if: always()
+      - name: Upload build log (only when the build failed)
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
@@ -42,12 +50,13 @@ jobs:
       - name: Upload plugin
         uses: actions/upload-artifact@v4
         with:
-          name: libMCBridge64
+          name: 1-GTA-plugin-libMCBridge64
           path: libs/arm64-v8a/libMCBridge64.so
 
       # unstripped copy: turns a crash offset like "libMCBridge64.so + 0x1a2b4" into a function/line:
       #   llvm-addr2line -f -C -i -e libMCBridge64.so 0x1a2b4
-      - name: Upload symbols
+      - name: Upload symbols (only when asked for)
+        if: ${{ inputs.symbols }}
         uses: actions/upload-artifact@v4
         with:
           name: libMCBridge64-symbols

@@ -32,8 +32,8 @@
 ## ขั้นตอนทดสอบ
 
 1. อัปโหลดไฟล์ในชุดนี้ขึ้น repo (branch `main`) → Actions จะ build เอง (หรือกด Run workflow) — `mod/setup.sh` ดึง ImGui v1.91.9 + AML ให้เอง
-2. ดาวน์โหลด artifact `libMCBridge64` วางใน `Android/data/com.rockstargames.gtasa/mods/`
-   ถ้า build พัง ส่งไฟล์ artifact `build-log` (หรือข้อความใน "First build errors") กลับมา
+2. ดาวน์โหลด artifact `1-GTA-plugin-libMCBridge64` (แตก zip) แล้ววางไฟล์ .so ใน `Android/data/com.rockstargames.gtasa/mods/`
+   ถ้า build พัง จะมี artifact `build-log` โผล่มาแทน ส่งไฟล์นั้น (หรือข้อความใน "First build errors") กลับมา
 3. เข้าเกม แตะปุ่มเขียว "MC" เปิดเมนู (ปุ่มไม่ขึ้น = ดู `last_action.txt` บรรทัด `menu: ...` ว่า hook ติดตั้งไหม)
 4. เดินในที่โล่ง รอประมาณ 10–20 วินาที (self test: อ่านตำแหน่ง, ค้นชื่อโมเดล, spawn คนเดินถนน 1 คนข้างๆ) แล้วดูแท็บ Status/Progress
 5. ส่งกลับมา: ไฟล์ `MCBridge/report.txt` (กด Log → บันทึกรายงาน) — ถ้าเกมเด้งก่อนเปิดเมนูได้ ส่ง `last_action.txt` + `previous_session.txt` แทน
@@ -56,7 +56,7 @@
 
 ### ทดสอบสองเกมพร้อมกัน
 
-1. อัปโหลดทั้ง repo → Actions build ทั้งสอง workflow: `libMCBridge64` (GTA, วางใน `mods/` ของ AML เหมือนเดิม) และ `mcbridge-mc-levipack` (Minecraft)
+1. อัปโหลดทั้ง repo → Actions build ทั้งสอง workflow: `1-GTA-plugin-libMCBridge64` (GTA, วางไฟล์ .so ใน `mods/` ของ AML เหมือนเดิม) และ `2-Minecraft-mod-mcbridge-mc-levipack` (Minecraft, แตก zip ของ GitHub หนึ่งครั้งจะได้ไฟล์ .levipack)
 2. ใน LeviLauncher: Mods → นำเข้า `mcbridge-mc.levipack` → เปิดใช้ → เปิด Minecraft ผ่าน LeviLauncher (LeviLauncher ใช้ได้กับ Minecraft ของแท้จาก Google Play ตามเอกสารของมัน)
 3. เปิด GTA SA ที่มี MCBridge 0.4 ให้ทั้งสองเกมรันพร้อมกัน (เช่นแบ่งหน้าจอ/หน้าต่างลอย — ยังไม่เคยทดสอบว่าเครื่องคุณปล่อยให้สองเกมวิ่งพร้อมกันได้ไหม)
 4. เข้าโลก Minecraft แล้วเดินสักพัก ดูเมนู MC ใน GTA แท็บ **สถานะ**: แถว Client ควรเป็น `client "minecraft"`, แถว **ฝั่ง Minecraft** แสดงข้อความสถานะ (`sig=1 hook=1 ticks=...`)

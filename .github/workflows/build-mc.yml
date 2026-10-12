@@ -1,7 +1,8 @@
 name: Build MCBridge Minecraft-side mod (arm64)
 
 # LeviLauncher native mod: CMake + Android NDK, the preloader SDK is cloned from LiteLDev/preloader-android.
-# Output: mcbridge-mc.levipack (import it in LeviLauncher: Mods) + the .so + the full build log.
+# Result on success: ONE download, "2-Minecraft-mod-mcbridge-mc-levipack" (GitHub wraps it in a zip: unzip once, inside is
+# mcbridge-mc.levipack -> import that file in LeviLauncher > Mods).  On failure: one download "build-mc-log".
 on:
   workflow_dispatch:
   push:
@@ -47,8 +48,8 @@ jobs:
           (cd dist/mcbridge-mc && zip -qr ../mcbridge-mc.levipack .)
           ls -l dist
 
-      - name: Upload build log
-        if: always()
+      - name: Upload build log (only when the build failed)
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-mc-log
@@ -58,11 +59,5 @@ jobs:
       - name: Upload mod package
         uses: actions/upload-artifact@v4
         with:
-          name: mcbridge-mc-levipack
+          name: 2-Minecraft-mod-mcbridge-mc-levipack
           path: dist/mcbridge-mc.levipack
-
-      - name: Upload the plain .so
-        uses: actions/upload-artifact@v4
-        with:
-          name: libmcbridge_mc
-          path: build-mc/out/arm64-v8a/libmcbridge_mc.so
